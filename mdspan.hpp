@@ -1301,6 +1301,7 @@ _MDSPAN_INLINE_VARIABLE constexpr auto dynamic_extent = std::numeric_limits<size
 #endif
 #include <array>
 
+#include <cassert>
 #include <cinttypes>
 
 namespace MDSPAN_IMPL_STANDARD_NAMESPACE {
@@ -1893,6 +1894,76 @@ static
 #endif
 constexpr bool __is_extents_v = __is_extents<T>::value;
 
+template<class InputIndexType, class ExtentsIndexType>
+MDSPAN_INLINE_FUNCTION
+constexpr void
+check_lower_bound(InputIndexType user_index,
+                  ExtentsIndexType /* current_extent */,
+                  std::true_type /* is_signed */)
+{
+  (void) user_index; // prevent unused variable warning
+#ifdef _MDSPAN_DEBUG
+  assert(static_cast<ExtentsIndexType>(user_index) >= 0);
+#endif
+}
+
+template<class InputIndexType, class ExtentsIndexType>
+MDSPAN_INLINE_FUNCTION
+constexpr void
+check_lower_bound(InputIndexType /* user_index */,
+                  ExtentsIndexType /* current_extent */,
+                  std::false_type /* is_signed */)
+{}
+
+template<class InputIndexType, class ExtentsIndexType>
+MDSPAN_INLINE_FUNCTION
+constexpr void
+check_upper_bound(InputIndexType user_index,
+                  ExtentsIndexType current_extent)
+{
+  (void) user_index; // prevent unused variable warnings
+  (void) current_extent;
+#ifdef _MDSPAN_DEBUG
+  assert(static_cast<ExtentsIndexType>(user_index) < current_extent);
+#endif
+}
+
+template<class InputIndex, class ExtentsIndexType>
+MDSPAN_INLINE_FUNCTION
+constexpr void
+check_one_index(InputIndex user_index,
+                ExtentsIndexType current_extent)
+{
+  check_lower_bound(user_index, current_extent,
+    std::integral_constant<bool, std::is_signed_v<ExtentsIndexType>>{});
+  check_upper_bound(user_index, current_extent);
+}
+ 
+template<size_t ... RankIndices,
+         class ExtentsIndexType, size_t ... Exts,
+         class ... Indices>
+MDSPAN_INLINE_FUNCTION
+constexpr void
+check_all_indices_helper(std::index_sequence<RankIndices...>,
+                         const extents<ExtentsIndexType, Exts...>& exts,
+                         Indices... indices)
+{
+  _MDSPAN_FOLD_COMMA(
+    (check_one_index(indices, exts.extent(RankIndices)))
+  );
+}
+
+template<class ExtentsIndexType, size_t ... Exts,
+         class ... Indices>
+MDSPAN_INLINE_FUNCTION
+constexpr void
+check_all_indices(const extents<ExtentsIndexType, Exts...>& exts,
+                  Indices... indices)
+{
+  check_all_indices_helper(std::make_index_sequence<sizeof...(Indices)>(),
+                           exts, indices...);
+}
+  
 } // namespace detail
 } // namespace MDSPAN_IMPL_STANDARD_NAMESPACE
 //END_FILE_INCLUDE: /home/runner/work/mdspan/mdspan/include/experimental/__p0009_bits/extents.hpp
@@ -2617,6 +2688,9 @@ struct layout_stride {
     )
     MDSPAN_FORCE_INLINE_FUNCTION
     constexpr index_type operator()(Indices... idxs) const noexcept {
+#if ! defined(NDEBUG)
+      detail::check_all_indices(this->extents(), idxs...);
+#endif // ! NDEBUG
       return static_cast<index_type>(__impl::_call_op_impl(*this, static_cast<index_type>(idxs)...));
     }
 
@@ -3037,6 +3111,9 @@ class layout_right::mapping {
     )
     _MDSPAN_HOST_DEVICE
     constexpr index_type operator()(Indices... idxs) const noexcept {
+#if ! defined(NDEBUG)
+      detail::check_all_indices(this->extents(), idxs...);
+#endif // ! NDEBUG
       return __compute_offset(__rank_count<0, extents_type::rank()>(), static_cast<index_type>(idxs)...);
     }
 
@@ -3708,6 +3785,9 @@ class layout_left::mapping {
     )
     _MDSPAN_HOST_DEVICE
     constexpr index_type operator()(Indices... idxs) const noexcept {
+#if ! defined(NDEBUG)
+      detail::check_all_indices(this->extents(), idxs...);
+#endif // ! NDEBUG
       return __compute_offset(__rank_count<0, extents_type::rank()>(), static_cast<index_type>(idxs)...);
     }
 
@@ -4161,6 +4241,9 @@ public:
   )
   constexpr size_t operator()(_Indices... idxs) const noexcept
   {
+#if ! defined(NDEBUG)
+    ::MDSPAN_IMPL_STANDARD_NAMESPACE::detail::check_all_indices(this->extents(), idxs...);
+#endif // ! NDEBUG
     return compute_offset(std::index_sequence_for<_Indices...>{}, idxs...);
   }
 
@@ -4992,6 +5075,47 @@ template <class LayoutMapping> struct submdspan_mapping_result {
 };
 
 namespace detail {
+
+// We use const Slice& and not Slice&& because the various
+// submdspan_mapping_impl overloads use their slices arguments
+// multiple times.  This makes perfect forwarding not useful, but we
+// still don't want to pass those (possibly of size 64 x 3 bits)
+// objects by value.
+template<class IndexType,
+         class Slice>
+MDSPAN_INLINE_FUNCTION
+constexpr bool
+one_slice_out_of_bounds(const IndexType& extent, const Slice& slice)
+{
+  return detail::first_of(slice) == extent;
+}
+
+template<size_t ... RankIndices,
+         class IndexType, size_t ... Exts,
+         class ... Slices>
+MDSPAN_INLINE_FUNCTION
+constexpr bool
+any_slice_out_of_bounds_helper(std::index_sequence<RankIndices...>,
+                               const extents<IndexType, Exts...>& exts,
+                               const Slices& ... slices)
+{
+  return _MDSPAN_FOLD_OR(
+    (one_slice_out_of_bounds(exts.extent(RankIndices), slices))
+  );
+}
+
+template<class IndexType, size_t ... Exts,
+         class ... Slices>
+MDSPAN_INLINE_FUNCTION
+constexpr bool
+any_slice_out_of_bounds(const extents<IndexType, Exts...>& exts,
+                        const Slices& ... slices)
+{
+  return any_slice_out_of_bounds_helper(
+    std::make_index_sequence<sizeof...(Slices)>(),
+    exts, slices...);
+}
+  
 // constructs sub strides
 template <class SrcMapping, class... slice_strides, size_t... InvMapIdxs>
 MDSPAN_INLINE_FUNCTION
@@ -5072,11 +5196,19 @@ layout_left::mapping<Extents>::submdspan_mapping_impl(SliceSpecifiers... slices)
       std::conditional_t<preserve_layout, layout_left, layout_stride>;
   using dst_mapping_t = typename dst_layout_t::template mapping<dst_ext_t>;
 
+  // Figure out if any slice's lower bound equals the corresponding extent.
+  // If so, bypass evaluating the layout mapping.  This fixes LWG Issue 4060.
+  const bool out_of_bounds =
+    detail::any_slice_out_of_bounds(this->extents(), slices...);
+  auto offset = static_cast<size_t>(
+    out_of_bounds ?
+    this->required_span_size() :
+    this->operator()(detail::first_of(slices)...)
+  );
+
   if constexpr (std::is_same_v<dst_layout_t, layout_left>) {
     // layout_left case
-    return submdspan_mapping_result<dst_mapping_t>{
-        dst_mapping_t(dst_ext),
-        static_cast<size_t>(this->operator()(detail::first_of(slices)...))};
+    return submdspan_mapping_result<dst_mapping_t>{dst_mapping_t(dst_ext), offset};
   } else {
     // layout_stride case
     auto inv_map = detail::inv_map_rank(
@@ -5093,7 +5225,7 @@ layout_left::mapping<Extents>::submdspan_mapping_impl(SliceSpecifiers... slices)
     #else
                                    std::tuple{detail::stride_of(slices)...})),
     #endif
-        static_cast<size_t>(this->operator()(detail::first_of(slices)...))};
+        offset};
   }
 #if defined(__NVCC__) && !defined(__CUDA_ARCH__) && defined(__GNUC__)
   __builtin_unreachable();
@@ -5179,11 +5311,19 @@ layout_right::mapping<Extents>::submdspan_mapping_impl(
       std::conditional_t<preserve_layout, layout_right, layout_stride>;
   using dst_mapping_t = typename dst_layout_t::template mapping<dst_ext_t>;
 
+  // Figure out if any slice's lower bound equals the corresponding extent.
+  // If so, bypass evaluating the layout mapping.  This fixes LWG Issue 4060.
+  const bool out_of_bounds =
+    detail::any_slice_out_of_bounds(this->extents(), slices...);
+  auto offset = static_cast<size_t>(
+    out_of_bounds ?
+    this->required_span_size() :
+    this->operator()(detail::first_of(slices)...)
+  );
+  
   if constexpr (std::is_same_v<dst_layout_t, layout_right>) {
     // layout_right case
-    return submdspan_mapping_result<dst_mapping_t>{
-        dst_mapping_t(dst_ext),
-        static_cast<size_t>(this->operator()(detail::first_of(slices)...))};
+    return submdspan_mapping_result<dst_mapping_t>{dst_mapping_t(dst_ext), offset};
   } else {
     // layout_stride case
     auto inv_map = detail::inv_map_rank(
@@ -5200,7 +5340,7 @@ layout_right::mapping<Extents>::submdspan_mapping_impl(
     #else
                                    std::tuple{detail::stride_of(slices)...})),
     #endif
-        static_cast<size_t>(this->operator()(detail::first_of(slices)...))};
+        offset};
   }
 #if defined(__NVCC__) && !defined(__CUDA_ARCH__) && defined(__GNUC__)
   __builtin_unreachable();
@@ -5234,6 +5374,17 @@ layout_stride::mapping<Extents>::submdspan_mapping_impl(
       std::index_sequence<>(),
       slices...);
   using dst_mapping_t = typename layout_stride::template mapping<dst_ext_t>;
+
+  // Figure out if any slice's lower bound equals the corresponding extent.
+  // If so, bypass evaluating the layout mapping.  This fixes LWG Issue 4060.
+  const bool out_of_bounds =
+    detail::any_slice_out_of_bounds(this->extents(), slices...);
+  auto offset = static_cast<size_t>(
+    out_of_bounds ?
+    this->required_span_size() :
+    this->operator()(detail::first_of(slices)...)
+  );
+
   return submdspan_mapping_result<dst_mapping_t>{
       dst_mapping_t(dst_ext, detail::construct_sub_strides(
                                  *this, inv_map,
@@ -5244,7 +5395,7 @@ layout_stride::mapping<Extents>::submdspan_mapping_impl(
 #else
                                  std::tuple(detail::stride_of(slices)...))),
 #endif
-      static_cast<size_t>(this->operator()(detail::first_of(slices)...))};
+      offset};
 }
 
 } // namespace MDSPAN_IMPL_STANDARD_NAMESPACE
