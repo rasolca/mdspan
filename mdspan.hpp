@@ -505,7 +505,7 @@ MDSPAN_FUNCTION inline void default_precondition_violation_handler(const char* c
 #else
 MDSPAN_FUNCTION inline void default_precondition_violation_handler(const char* cond, const char* file, unsigned line)
 {
-  std::fprintf(::stderr, "%s:%u: precondition failure: `%s`\n", file, line, cond);
+  std::fprintf(stderr, "%s:%u: precondition failure: `%s`\n", file, line, cond);
   std::abort();
 }
 #endif
