@@ -532,7 +532,7 @@ namespace detail {
 template <bool check = MDSPAN_IMPL_CHECK_PRECONDITION>
 MDSPAN_FUNCTION constexpr void precondition(const char* cond, const char* file, unsigned line)
 {
-  if (not check) { return; }
+  if (!check) { return; }
   // in case the macro doesn't use the arguments for custom macros
   (void) cond;
   (void) file;
@@ -545,7 +545,7 @@ MDSPAN_FUNCTION constexpr void precondition(const char* cond, const char* file, 
 
 #define MDSPAN_IMPL_PRECONDITION(...) \
   do { \
-    if (not (__VA_ARGS__)) { \
+    if (!(__VA_ARGS__)) { \
       MDSPAN_IMPL_STANDARD_NAMESPACE::detail::precondition(#__VA_ARGS__, __FILE__, __LINE__); \
     } \
   } while (0)
@@ -1381,7 +1381,7 @@ using with_rank = std::integral_constant<std::size_t, N>;
 template <class I1, class I2>
 constexpr bool common_integral_compare(I1 x, I2 y)
 {
-  static_assert(std::is_integral<I1>::value and
+  static_assert(std::is_integral<I1>::value &&
                 std::is_integral<I2>::value, "");
 
   using I = std::common_type_t<I1, I2>;
@@ -2993,7 +2993,7 @@ struct layout_stride {
     )
     MDSPAN_INLINE_FUNCTION
     friend constexpr bool operator!=(const mapping& x, const StridedLayoutMapping& y) noexcept {
-      return not (x == y);
+      return !(x == y);
     }
 
     MDSPAN_TEMPLATE_REQUIRES(
@@ -3031,8 +3031,8 @@ constexpr void validate_strides(with_rank<0>, Layout, const Extents&, const Mapp
 template <std::size_t N, class Layout, class Extents, class Mapping>
 constexpr void validate_strides(with_rank<N>, Layout, const Extents& ext, const Mapping& other)
 {
-  static_assert(std::is_same<typename Mapping::layout_type, layout_stride>::value and
-                (std::is_same<Layout, layout_left>::value or
+  static_assert(std::is_same<typename Mapping::layout_type, layout_stride>::value &&
+                (std::is_same<Layout, layout_left>::value ||
                  std::is_same<Layout, layout_right>::value)
                 , "This function is only intended to validate construction of "
                   "a layout_left or layout_right mapping from a layout_stride mapping.");
@@ -3045,7 +3045,7 @@ constexpr void validate_strides(with_rank<N>, Layout, const Extents& ext, const 
     const std::size_t s = is_left ? r : N - 1 - r;
 
     MDSPAN_IMPL_PRECONDITION(common_integral_compare(expected_stride, other.stride(s))
-                             and "invalid strides for layout_{left,right}");
+                             && "invalid strides for layout_{left,right}");
 
     expected_stride *= ext.extent(s);
   }
@@ -3157,7 +3157,7 @@ constexpr void check_padded_layout_converting_constructor_mandates(MDSPAN_IMPL_S
     (extents_type::static_extent(idx) != dynamic_extent) &&
     (padding_value != dynamic_extent);
 
-  static_assert(not statically_determinable or
+  static_assert(!statically_determinable ||
                 (padding_value == 0
                  ? _LayoutExtentsType::static_extent(idx) == 0
                  : _LayoutExtentsType::static_extent(idx) % padding_value == 0),
